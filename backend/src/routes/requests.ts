@@ -11,6 +11,7 @@ const createRequestSchema = z.object({
   title: z.string().trim().min(5).max(160),
   description: z.string().trim().min(15).max(5000),
   categoryId: z.string().trim().optional(),
+  category: z.string().trim().optional(),
   priority: z.enum(['Low', 'Medium', 'High']).optional().default('Medium'),
 })
 
@@ -27,30 +28,13 @@ requests.use('*', requireAuth)
 
 // List requests (filtered by user ownership if student; all if staff/admin)
 requests.get('/', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const statusFilter = c.req.query('status')
   const search = c.req.query('q')?.trim()
-
-  if (!isDatabaseConfigured()) {
-    // Return sample offline response
-    return c.json({
-      requests: [
-        {
-          id: 'demo-req-1',
-          requestCode: 'CA-1048',
-          title: 'Attendance discrepancy in Mathematics II',
-          description: 'Present on Oct 5th period 2, but marked absent in portal.',
-          category: 'academic',
-          priority: 'High',
-          status: 'In progress',
-          owner: user.fullName || 'Abhinash Jangapally',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-      mode: 'demo',
-    })
-  }
 
   try {
     let sql = `
@@ -96,30 +80,12 @@ requests.get('/', async (c) => {
 
 // Get request by ID (enforcing ownership)
 requests.get('/:id', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const id = c.req.param('id')
-
-  if (!isDatabaseConfigured()) {
-    return c.json({
-      request: {
-        id,
-        requestCode: 'CA-1048',
-        title: 'Attendance discrepancy in Mathematics II',
-        description: 'Present on Oct 5th period 2, but marked absent in portal.',
-        category: 'academic',
-        priority: 'High',
-        status: 'In progress',
-        owner: user.fullName || 'Abhinash Jangapally',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        history: [
-          { date: new Date().toLocaleString(), title: 'Request submitted', body: 'Demo request created.' },
-          { date: new Date().toLocaleString(), title: 'Status updated', body: 'Team assigned: Student Services.' },
-        ],
-      },
-      mode: 'demo',
-    })
-  }
 
   try {
     const rows = await query<RowDataPacket[]>(
@@ -180,6 +146,10 @@ requests.get('/:id', async (c) => {
 
 // Create request
 requests.post('/', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const parsed = createRequestSchema.safeParse(await c.req.json().catch(() => null))
 
@@ -187,32 +157,29 @@ requests.post('/', async (c) => {
     return c.json({ error: 'INVALID_INPUT', message: 'Provide a title (min 5 chars) and description (min 15 chars).' }, 400)
   }
 
-  const { title, description, categoryId, priority } = parsed.data
+  const { title, description, categoryId, category, priority } = parsed.data
   const randSuffix = Math.floor(1000 + Math.random() * 9000).toString()
   const requestCode = `CA-${randSuffix}`
 
-  if (!isDatabaseConfigured()) {
-    const demoReq = {
-      id: `req-${Date.now()}`,
-      requestCode,
-      title,
-      description,
-      categoryId: categoryId || 'cat-academic',
-      priority,
-      status: 'Open',
-      createdBy: user.id,
-      createdAt: new Date().toISOString(),
-    }
-    return c.json({ request: demoReq, mode: 'demo' }, 201)
-  }
-
   try {
     const id = crypto.randomUUID()
+    const rawCat = categoryId || category
+    let resolvedCategoryId: string | null = null
+
+    if (rawCat) {
+      const catRows = await query<RowDataPacket[]>(
+        'SELECT id FROM request_categories WHERE id = ? OR slug = ? LIMIT 1',
+        [rawCat, rawCat]
+      )
+      if (catRows.length > 0) {
+        resolvedCategoryId = catRows[0].id
+      }
+    }
 
     await query(
       `INSERT INTO service_requests (id, request_code, title, description, category_id, priority, status, created_by)
        VALUES (?, ?, ?, ?, ?, ?, 'Open', ?)`,
-      [id, requestCode, title, description, categoryId || null, priority, user.id]
+      [id, requestCode, title, description, resolvedCategoryId, priority, user.id]
     )
 
     // Log initial activity
@@ -234,6 +201,10 @@ requests.post('/', async (c) => {
 
 // Update status (staff/admin only)
 requests.patch('/:id/status', requireRole('staff', 'admin'), async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const id = c.req.param('id')
   const parsed = updateStatusSchema.safeParse(await c.req.json().catch(() => null))
@@ -243,10 +214,6 @@ requests.patch('/:id/status', requireRole('staff', 'admin'), async (c) => {
   }
 
   const { status, note } = parsed.data
-
-  if (!isDatabaseConfigured()) {
-    return c.json({ success: true, status, mode: 'demo' })
-  }
 
   try {
     const check = await query<RowDataPacket[]>('SELECT id, status FROM service_requests WHERE id = ? OR request_code = ? LIMIT 1', [id, id])
@@ -270,6 +237,10 @@ requests.patch('/:id/status', requireRole('staff', 'admin'), async (c) => {
 
 // Add comment to request activity
 requests.post('/:id/activity', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const id = c.req.param('id')
   const parsed = addCommentSchema.safeParse(await c.req.json().catch(() => null))
@@ -279,13 +250,6 @@ requests.post('/:id/activity', async (c) => {
   }
 
   const { body } = parsed.data
-
-  if (!isDatabaseConfigured()) {
-    return c.json({
-      activity: { id: Date.now(), title: `${user.fullName}'s comment`, body, date: new Date().toLocaleString() },
-      mode: 'demo',
-    }, 201)
-  }
 
   try {
     const check = await query<RowDataPacket[]>('SELECT id, created_by FROM service_requests WHERE id = ? OR request_code = ? LIMIT 1', [id, id])
@@ -323,15 +287,15 @@ requests.post('/:id/activity', async (c) => {
 
 // Delete request
 requests.delete('/:id', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const user = c.get('user')
   const id = c.req.param('id')
 
-  if (!isDatabaseConfigured()) {
-    return c.json({ success: true, mode: 'demo' })
-  }
-
   try {
-    const check = await query<RowDataPacket[]>('SELECT id, created_by, status FROM service_requests WHERE id = ? LIMIT 1', [id])
+    const check = await query<RowDataPacket[]>('SELECT id, created_by, status FROM service_requests WHERE id = ? OR request_code = ? LIMIT 1', [id, id])
     if (!check.length) return c.json({ error: 'NOT_FOUND', message: 'Request not found.' }, 404)
     const target = check[0]
 
@@ -340,7 +304,7 @@ requests.delete('/:id', async (c) => {
       return c.json({ error: 'FORBIDDEN', message: 'Cannot delete this request.' }, 403)
     }
 
-    await query('DELETE FROM service_requests WHERE id = ?', [id])
+    await query('DELETE FROM service_requests WHERE id = ?', [target.id])
     return c.json({ success: true, mode: 'database' })
   } catch (error) {
     console.error('Error deleting request:', error)

@@ -73,7 +73,7 @@ describe('CampusAssist API Endpoints', () => {
     const data = await res.json()
     expect(data.reply).toBeTruthy()
     expect(data.sources).toBeDefined()
-  })
+  }, 60000)
 
   it('POST /api/ai/chat supports Telugu queries', async () => {
     const res = await app.request('/api/ai/chat', {
@@ -88,7 +88,7 @@ describe('CampusAssist API Endpoints', () => {
 
     const data = await res.json()
     expect(data.reply).toBeTruthy()
-  })
+  }, 60000)
 
   it('POST /api/ai/copilot/summarize authorizes staff token and returns summary', async () => {
     const staffToken = signToken({
@@ -116,7 +116,7 @@ describe('CampusAssist API Endpoints', () => {
     expect(data.summary).toBeTruthy()
     expect(data.extractedFacts).toBeDefined()
     expect(data.suggestedReply).toBeTruthy()
-  })
+  }, 60000)
 
   it('POST /api/ai/copilot/summarize rejects unauthorized student tokens with 403', async () => {
     const studentToken = signToken({

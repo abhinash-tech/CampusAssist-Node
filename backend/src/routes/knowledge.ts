@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { query, isDatabaseConfigured } from '../db/mysql.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { findKnowledgeArticles, sampleArticles, chunkText } from '../services/knowledge.js'
+import { findKnowledgeArticles, chunkText } from '../services/knowledge.js'
 import { generateEmbedding } from '../services/ai.js'
 import type { RowDataPacket } from 'mysql2/promise'
 
@@ -20,29 +20,36 @@ const createArticleSchema = z.object({
 
 knowledge.get('/', async (c) => {
   if (!isDatabaseConfigured()) {
-    return c.json({ articles: sampleArticles, mode: 'demo' })
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
   try {
     const rows = await query<RowDataPacket[]>(
       'SELECT id, slug, title, category, summary, content, is_published AS isPublished, updated_at AS updatedAt FROM knowledge_articles WHERE is_published = TRUE ORDER BY title ASC'
     )
-    return c.json({ articles: rows.length ? rows : sampleArticles, mode: 'database' })
+    return c.json({ articles: rows, mode: 'database' })
   } catch (error) {
     console.error('Error fetching articles:', error)
-    return c.json({ articles: sampleArticles, mode: 'fallback' })
+    return c.json({ error: 'DB_ERROR', message: 'Could not fetch knowledge articles.' }, 500)
   }
 })
 
 knowledge.get('/search', async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
   const queryParam = (c.req.query('q') ?? '').trim().slice(0, 200)
   if (!queryParam) {
-    return c.json({ items: [], mode: isDatabaseConfigured() ? 'database' : 'sample' })
+    return c.json({ items: [], mode: 'database' })
   }
   const items = await findKnowledgeArticles(queryParam)
-  return c.json({ items, mode: isDatabaseConfigured() ? 'database' : 'sample' })
+  return c.json({ items, mode: 'database' })
 })
 
 knowledge.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const parsed = createArticleSchema.safeParse(await c.req.json().catch(() => null))
   if (!parsed.success) {
     return c.json({ error: 'INVALID_INPUT', message: 'Provide a title, category, summary, and content (min 20 chars).' }, 400)
@@ -51,13 +58,6 @@ knowledge.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
   const user = c.get('user')
   const { title, category, summary, content, isPublished } = parsed.data
   const slug = parsed.data.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-
-  if (!isDatabaseConfigured()) {
-    return c.json({
-      article: { id: `art-${Date.now()}`, slug, title, category, summary, content, isPublished },
-      mode: 'demo',
-    }, 201)
-  }
 
   try {
     const id = crypto.randomUUID()
@@ -94,10 +94,11 @@ knowledge.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
 })
 
 knowledge.delete('/:id', requireAuth, requireRole('admin'), async (c) => {
-  const id = c.req.param('id')
   if (!isDatabaseConfigured()) {
-    return c.json({ success: true, mode: 'demo' })
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
+
+  const id = c.req.param('id')
   try {
     await query('DELETE FROM knowledge_articles WHERE id = ?', [id])
     return c.json({ success: true, mode: 'database' })

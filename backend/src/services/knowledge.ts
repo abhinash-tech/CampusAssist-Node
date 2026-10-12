@@ -102,19 +102,20 @@ export async function findKnowledgeArticles(queryText: string): Promise<Knowledg
   const terms = tokenizeText(queryText).filter((t) => !STOP_WORDS.has(t) && t.length >= 3)
   if (!terms.length) return []
 
-  let articles: KnowledgeArticle[] = sampleArticles
+  let articles: KnowledgeArticle[] = []
 
   if (isDatabaseConfigured()) {
     try {
       const rows = await query<RowDataPacket[]>(
         'SELECT id, slug, title, category, summary, content FROM knowledge_articles WHERE is_published = TRUE'
       )
-      if (rows && rows.length > 0) {
-        articles = rows as KnowledgeArticle[]
-      }
+      articles = (rows as KnowledgeArticle[]) || []
     } catch (err) {
-      console.warn('Could not read knowledge from MySQL, falling back to local dataset:', err)
+      console.warn('Could not read knowledge from MySQL:', err)
+      articles = []
     }
+  } else {
+    articles = sampleArticles
   }
 
   // Score articles by term frequency across title, category, summary, and content

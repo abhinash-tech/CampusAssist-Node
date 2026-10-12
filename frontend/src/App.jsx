@@ -12,7 +12,7 @@ import { ArrowLeft, Compass } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function NotFound() {
-  return <main className="not-found-page"><span className="not-found-mark"><Compass size={26} /></span><span className="eyebrow"><span className="eyebrow-dot" /> PAGE NOT FOUND</span><h1>Looks like we've taken a wrong turn.</h1><p>The page you're looking for isn't in this demo workspace.</p><Link to="/" className="button button-blue"><ArrowLeft size={15} /> Back to homepage</Link></main>
+  return <main className="not-found-page"><span className="not-found-mark"><Compass size={26} /></span><span className="eyebrow"><span className="eyebrow-dot" /> PAGE NOT FOUND</span><h1>Looks like we've taken a wrong turn.</h1><p>The page you're looking for could not be found.</p><Link to="/" className="button button-blue"><ArrowLeft size={15} /> Back to homepage</Link></main>
 }
 
 export default function App() {

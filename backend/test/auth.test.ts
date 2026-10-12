@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import bcrypt from 'bcryptjs'
+import app from '../index.js'
 import { signToken, verifyToken } from '../src/middleware/auth.js'
 
 describe('Authentication & Security', () => {
@@ -44,4 +45,64 @@ describe('Authentication & Security', () => {
     const malformed = verifyToken('not.a.token')
     expect(malformed).toBeNull()
   })
+
+  it('rejects public registration attempting to register as staff or admin', async () => {
+    const resStaff = await app.request('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: `escalate-staff-${Date.now()}@test.edu`,
+        password: 'Password123!',
+        fullName: 'Attacker Staff',
+        role: 'staff',
+      }),
+    })
+    expect(resStaff.status).toBe(403)
+    const dataStaff = await resStaff.json()
+    expect(dataStaff.error).toBe('ROLE_ESCALATION_FORBIDDEN')
+
+    const resAdmin = await app.request('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: `escalate-admin-${Date.now()}@test.edu`,
+        password: 'Password123!',
+        fullName: 'Attacker Admin',
+        role: 'admin',
+      }),
+    })
+    expect(resAdmin.status).toBe(403)
+    const dataAdmin = await resAdmin.json()
+    expect(dataAdmin.error).toBe('ROLE_ESCALATION_FORBIDDEN')
+  })
+
+  it('rejects login with wrong password returning 401', async () => {
+    // Attempting login with non-matching password
+    const res = await app.request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'nobody@nonexistent.edu',
+        password: 'definitelyWrongPassword123!',
+      }),
+    })
+    expect(res.status).toBe(401)
+    const data = await res.json()
+    expect(data.error).toBe('INVALID_CREDENTIALS')
+  })
+
+  it('rejects unauthenticated requests to /auth/me with 401', async () => {
+    const res = await app.request('/api/auth/me')
+    expect(res.status).toBe(401)
+    const data = await res.json()
+    expect(data.error).toBe('UNAUTHORIZED')
+  })
+
+  it('rejects invalid or forged bearer token on protected endpoint with 401', async () => {
+    const res = await app.request('/api/auth/me', {
+      headers: { Authorization: 'Bearer forged.invalid.token' },
+    })
+    expect(res.status).toBe(401)
+  })
 })
+

@@ -7,29 +7,26 @@ import type { RowDataPacket } from 'mysql2/promise'
 
 const categories = new Hono()
 
-const defaultCategories = [
-  { id: 'cat-academic', name: 'Academic support', slug: 'academic', description: 'Coursework, grades, attendance and academic records.', is_active: true },
-  { id: 'cat-campus', name: 'Campus services', slug: 'campus', description: 'Facilities, transport, hostel and campus life.', is_active: true },
-  { id: 'cat-technical', name: 'IT & digital access', slug: 'technical', description: 'Accounts, Wi-Fi, LMS and technical assistance.', is_active: true },
-  { id: 'cat-admin', name: 'Administration', slug: 'administration', description: 'Certificates, documents and administrative requests.', is_active: true },
-]
-
 categories.get('/', async (c) => {
   if (!isDatabaseConfigured()) {
-    return c.json(defaultCategories)
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
   try {
     const rows = await query<RowDataPacket[]>(
       'SELECT id, name, slug, description, is_active FROM request_categories WHERE is_active = TRUE ORDER BY name ASC'
     )
-    return c.json(rows.length ? rows : defaultCategories)
+    return c.json(rows)
   } catch (error) {
     console.error('Error fetching categories:', error)
-    return c.json(defaultCategories)
+    return c.json({ error: 'DB_ERROR', message: 'Could not fetch service categories.' }, 500)
   }
 })
 
 categories.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
   const schema = z.object({
     name: z.string().trim().min(3).max(100),
     description: z.string().trim().max(1000).optional().default(''),
@@ -42,13 +39,6 @@ categories.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
 
   const { name, description } = parsed.data
   const slug = parsed.data.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-
-  if (!isDatabaseConfigured()) {
-    return c.json({
-      category: { id: `cat-${Date.now()}`, name, slug, description, is_active: true },
-      mode: 'demo',
-    }, 201)
-  }
 
   try {
     const id = crypto.randomUUID()
@@ -64,10 +54,11 @@ categories.post('/', requireAuth, requireRole('admin', 'staff'), async (c) => {
 })
 
 categories.delete('/:id', requireAuth, requireRole('admin'), async (c) => {
-  const id = c.req.param('id')
   if (!isDatabaseConfigured()) {
-    return c.json({ success: true, mode: 'demo' })
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
+
+  const id = c.req.param('id')
   try {
     await query('UPDATE request_categories SET is_active = FALSE WHERE id = ?', [id])
     return c.json({ success: true, mode: 'database' })

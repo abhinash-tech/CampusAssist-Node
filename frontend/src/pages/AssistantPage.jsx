@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, ArrowUpRight, BookOpen, Bot, Check, CircleHelp, GraduationCap, Languages, LifeBuoy, RotateCcw, Send, Sparkles, ThumbsDown, ThumbsUp, TicketCheck, UserRound } from 'lucide-react'
-import { knowledgeArticles } from '../data/mockData.js'
+import { knowledgeService } from '../services/api/knowledgeService.js'
+import { authService } from '../services/authService.js'
 import { AI_MODE, chatWithCampusAI } from '../services/aiService.js'
 
 const suggestionsEn = [
@@ -58,21 +59,38 @@ function answerFor(text, lang = 'English') {
 }
 
 export default function AssistantPage() {
+  const currentUser = authService.getCurrentUser()
+  const firstName = currentUser?.fullName ? currentUser.fullName.split(' ')[0] : 'there'
+  const greetingText = `Hi ${firstName} — I’m your CampusAssist guide. I can help you explore campus services, find a useful guide, or get started with a support request. You can ask in English, తెలుగు (Telugu), or mixed language. What would you like to work through today?`
+
   const [language, setLanguage] = useState('English')
   const [messages, setMessages] = useState([
     {
       id: 1,
       role: 'assistant',
-      text: 'Hi Abhinash — I’m your CampusAssist guide. I can help you explore campus services, find a useful guide, or get started with a support request. You can ask in English, తెలుగు (Telugu), or mixed language. What would you like to work through today?',
+      text: greetingText,
       actions: [],
     },
   ])
   const [input, setInput] = useState('')
   const [feedback, setFeedback] = useState({})
   const [showSources, setShowSources] = useState(false)
+  const [sources, setSources] = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [assistantMode, setAssistantMode] = useState(AI_MODE === 'api' ? 'API mode · live server' : 'Demo assistant')
+  const [assistantMode, setAssistantMode] = useState(AI_MODE === 'api' ? 'Gemini AI Assistant' : 'CampusAssist Assistant')
   const messagesEndRef = useRef(null)
+
+  useEffect(() => {
+    let active = true
+    knowledgeService.list()
+      .then((data) => {
+        if (!active) return
+        const list = Array.isArray(data) ? data : data?.articles || []
+        setSources(list)
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
 
   async function send(text = input) {
     const value = text.trim()
@@ -126,7 +144,7 @@ export default function AssistantPage() {
       {
         id: 1,
         role: 'assistant',
-        text: 'Hi Abhinash — I’m your CampusAssist guide. Ask in English, తెలుగు, or mixed language. What would you like to work through today?',
+        text: `Hi ${firstName} — I’m your CampusAssist guide. Ask in English, తెలుగు, or mixed language. What would you like to work through today?`,
         actions: [],
       },
     ])
@@ -293,21 +311,25 @@ export default function AssistantPage() {
           <div className="panel sources-panel">
             <div className="panel-heading">
               <div>
-                <span className="panel-kicker">DEMO KNOWLEDGE BASE</span>
-                <h2>Available sample guides</h2>
+                <span className="panel-kicker">CAMPUS KNOWLEDGE BASE</span>
+                <h2>Available campus guides</h2>
               </div>
-              <span className="tiny-count">{knowledgeArticles.length.toString().padStart(2, '0')}</span>
+              <span className="tiny-count">{sources.length.toString().padStart(2, '0')}</span>
             </div>
-            {knowledgeArticles.map((item) => (
-              <Link to="/app/knowledge" className="source-row" key={item.id}>
-                <span><BookOpen size={16} /></span>
-                <div>
-                  <strong>{item.title}</strong>
-                  <small>{item.category} · {item.read}</small>
-                </div>
-                <ArrowUpRight size={15} />
-              </Link>
-            ))}
+            {sources.length === 0 ? (
+              <div className="table-empty" style={{ padding: '20px' }}>No campus guides published yet.</div>
+            ) : (
+              sources.map((item) => (
+                <Link to="/app/knowledge" className="source-row" key={item.id}>
+                  <span><BookOpen size={16} /></span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>{item.category} · {item.summary ? item.summary.slice(0, 60) + '…' : 'Campus guide'}</small>
+                  </div>
+                  <ArrowUpRight size={15} />
+                </Link>
+              ))
+            )}
           </div>
         )}
 

@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { query, isDatabaseConfigured } from '../db/mysql.js'
-import { requireAuth, signToken } from '../middleware/auth.js'
+import { requireAuth, requireRole, signToken } from '../middleware/auth.js'
 import type { RowDataPacket } from 'mysql2/promise'
 
 const auth = new Hono()
@@ -15,7 +15,7 @@ const registerSchema = z.object({
   studentId: z.string().trim().max(50).optional(),
   department: z.string().trim().max(50).optional().default('CSE'),
   section: z.string().trim().max(10).optional().default('A'),
-  role: z.enum(['student', 'staff', 'admin']).optional().default('student'),
+  role: z.string().optional(),
 })
 
 const loginSchema = z.object({
@@ -23,24 +23,38 @@ const loginSchema = z.object({
   password: z.string().min(1),
 })
 
+const updateProfileSchema = z.object({
+  fullName: z.string().trim().min(2).max(120).optional(),
+  studentId: z.string().trim().max(50).optional(),
+  department: z.string().trim().max(50).optional(),
+  section: z.string().trim().max(10).optional(),
+})
+
+const updateRoleSchema = z.object({
+  role: z.enum(['student', 'staff', 'admin']),
+})
+
 auth.post('/register', async (c) => {
-  const parsed = registerSchema.safeParse(await c.req.json().catch(() => null))
+  const body = await c.req.json().catch(() => null)
+  const parsed = registerSchema.safeParse(body)
   if (!parsed.success) {
     return c.json({ error: 'INVALID_INPUT', message: 'Provide valid registration details (name, email, password min 6 chars).' }, 400)
   }
 
-  const { email, password, fullName, studentId, department, section, role } = parsed.data
+  const { email, password, fullName, studentId, department, section, role: requestedRole } = parsed.data
+
+  // Role-escalation protection: Public registration must never grant staff or admin privileges
+  if (requestedRole && requestedRole !== 'student') {
+    return c.json({
+      error: 'ROLE_ESCALATION_FORBIDDEN',
+      message: 'Public registration cannot assign privileged roles (staff or admin). Roles are assigned server-side.'
+    }, 403)
+  }
+
+  const assignedRole = 'student'
 
   if (!isDatabaseConfigured()) {
-    // Deterministic offline demo mode
-    const demoId = `demo-user-${Date.now()}`
-    const token = signToken({ id: demoId, email, role, fullName })
-    return c.json({
-      token,
-      user: { id: demoId, email, fullName, studentId: studentId || 'DEMO123', department, section, role },
-      mode: 'demo',
-      message: 'Demo registration: Database not configured; session active in local memory.',
-    }, 201)
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
 
   try {
@@ -55,11 +69,11 @@ auth.post('/register', async (c) => {
     await query(
       `INSERT INTO users (id, email, password_hash, full_name, student_id, department, section, role)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, email, passwordHash, fullName, studentId || null, department, section, role]
+      [id, email, passwordHash, fullName, studentId || null, department, section, assignedRole]
     )
 
-    const userPayload = { id, email, fullName, studentId, department, section, role }
-    const token = signToken({ id, email, role, fullName })
+    const userPayload = { id, email, fullName, studentId: studentId || null, department, section, role: assignedRole }
+    const token = signToken({ id, email, role: assignedRole, fullName })
 
     return c.json({ token, user: userPayload, mode: 'database' }, 201)
   } catch (error) {
@@ -78,17 +92,7 @@ auth.post('/login', async (c) => {
   const { email, password } = parsed.data
 
   if (!isDatabaseConfigured()) {
-    // Offline demo fallback login
-    const demoId = 'demo-user-1'
-    const role = email.includes('admin') ? 'admin' : email.includes('staff') ? 'staff' : 'student'
-    const name = email.split('@')[0] || 'Demo User'
-    const token = signToken({ id: demoId, email, role, fullName: name })
-    return c.json({
-      token,
-      user: { id: demoId, email, fullName: name, role },
-      mode: 'demo',
-      message: 'Demo login: Database not configured; role inferred from email.',
-    })
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
 
   try {
@@ -138,7 +142,7 @@ auth.post('/login', async (c) => {
 auth.get('/me', requireAuth, async (c) => {
   const current = c.get('user')
   if (!isDatabaseConfigured()) {
-    return c.json({ user: current, mode: 'demo' })
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
 
   try {
@@ -147,7 +151,7 @@ auth.get('/me', requireAuth, async (c) => {
       [current.id]
     )
     if (!rows || rows.length === 0) {
-      return c.json({ user: current, mode: 'fallback' })
+      return c.json({ error: 'UNAUTHORIZED', message: 'User account no longer exists.' }, 401)
     }
     const row = rows[0]
     return c.json({
@@ -164,7 +168,87 @@ auth.get('/me', requireAuth, async (c) => {
       mode: 'database',
     })
   } catch (error) {
-    return c.json({ user: current, mode: 'fallback' })
+    console.error('Error in /me:', error)
+    return c.json({ error: 'DB_ERROR', message: 'Could not fetch user profile.' }, 500)
+  }
+})
+
+auth.patch('/profile', requireAuth, async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
+  const current = c.get('user')
+  const parsed = updateProfileSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) {
+    return c.json({ error: 'INVALID_INPUT', message: 'Invalid profile details.' }, 400)
+  }
+
+  const { fullName, studentId, department, section } = parsed.data
+
+  try {
+    const existing = await query<RowDataPacket[]>(
+      'SELECT id, email, full_name, student_id, department, section, role FROM users WHERE id = ? LIMIT 1',
+      [current.id]
+    )
+    if (!existing || existing.length === 0) {
+      return c.json({ error: 'UNAUTHORIZED', message: 'User account not found.' }, 401)
+    }
+
+    const user = existing[0]
+    const updatedName = fullName !== undefined ? fullName : user.full_name
+    const updatedStudentId = studentId !== undefined ? studentId : user.student_id
+    const updatedDept = department !== undefined ? department : user.department
+    const updatedSec = section !== undefined ? section : user.section
+
+    await query(
+      'UPDATE users SET full_name = ?, student_id = ?, department = ?, section = ? WHERE id = ?',
+      [updatedName, updatedStudentId, updatedDept, updatedSec, current.id]
+    )
+
+    return c.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: updatedName,
+        studentId: updatedStudentId,
+        department: updatedDept,
+        section: updatedSec,
+        role: user.role,
+      },
+      message: 'Profile updated successfully.',
+    })
+  } catch (error) {
+    console.error('Profile update error:', error)
+    return c.json({ error: 'UPDATE_FAILED', message: 'Could not update profile.' }, 500)
+  }
+})
+
+// Administrator promotion of user roles
+auth.patch('/users/:id/role', requireAuth, requireRole('admin'), async (c) => {
+  if (!isDatabaseConfigured()) {
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
+  }
+
+  const targetId = c.req.param('id')
+  const parsed = updateRoleSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) {
+    return c.json({ error: 'INVALID_INPUT', message: 'Provide a valid role (student, staff, admin).' }, 400)
+  }
+
+  const { role: newRole } = parsed.data
+
+  try {
+    const existing = await query<RowDataPacket[]>('SELECT id FROM users WHERE id = ? LIMIT 1', [targetId])
+    if (!existing || existing.length === 0) {
+      return c.json({ error: 'NOT_FOUND', message: 'Target user does not exist.' }, 404)
+    }
+
+    await query('UPDATE users SET role = ? WHERE id = ?', [newRole, targetId])
+    return c.json({ success: true, userId: targetId, role: newRole })
+  } catch (error) {
+    console.error('Role update error:', error)
+    return c.json({ error: 'UPDATE_FAILED', message: 'Could not update role.' }, 500)
   }
 })
 

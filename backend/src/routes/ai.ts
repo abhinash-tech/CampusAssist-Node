@@ -99,20 +99,7 @@ ai.post('/copilot/summarize', requireAuth, requireRole('staff', 'admin'), async 
   const { requestId, title, description, category, priority } = parsed.data
 
   if (!isDatabaseConfigured()) {
-    // Offline / Demo summary using provided fields or realistic defaults
-    const summary = await summarizeRequestForStaff({
-      requestCode: requestId,
-      title: title || 'Attendance discrepancy in Mathematics II',
-      description: description || 'Present on Oct 5th period 2, but marked absent in portal.',
-      category: category || 'academic',
-      priority: priority || 'High',
-      status: 'In progress',
-      history: [
-        { title: 'Request submitted', body: 'Student submitted ticket.', date: 'Oct 06', actor: 'Student' },
-        { title: 'Assigned', body: 'Assigned to Student Services.', date: 'Oct 07', actor: 'System' },
-      ],
-    })
-    return c.json(summary)
+    return c.json({ error: 'SERVICE_UNAVAILABLE', message: 'Database service is unconfigured or unavailable.' }, 503)
   }
 
   try {

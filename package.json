@@ -3,12 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "engines": { "node": ">=22.0.0" },
+  "engines": { "node": ">=20.0.0" },
   "workspaces": ["frontend", "backend"],
   "scripts": {
     "dev": "npm run dev --workspace=campusassist-frontend",
     "dev:api": "npm run dev --workspace=@campusassist/api",
-    "build": "npm run build --workspace=campusassist-frontend && npm run build --workspace=@campusassist/api",
+    "build": "npm run build --workspace=campusassist-frontend",
+    "build:all": "npm run build --workspace=campusassist-frontend && npm run build --workspace=@campusassist/api",
+    "build:backend": "npm run build --workspace=@campusassist/api",
     "lint": "npm run lint --workspace=campusassist-frontend && npm run typecheck --workspace=@campusassist/api",
     "preview": "npm run preview --workspace=campusassist-frontend"
   }

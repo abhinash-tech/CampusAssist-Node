@@ -466,7 +466,7 @@ export function StaffPage() {
           </table>
           {filtered.length === 0 && (
             <div className="table-empty">
-              {loading ? 'Loading queue from campus database…' : 'No requests match this filter.'}
+              {loading ? 'Loading queue from campus database…' : error ? error : 'No requests match this filter.'}
             </div>
           )}
         </div>

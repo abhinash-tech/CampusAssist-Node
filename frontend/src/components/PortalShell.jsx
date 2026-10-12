@@ -50,7 +50,7 @@ export default function PortalShell() {
             return
           }
         }
-      } catch (err) {
+      } catch {
         if (mounted) {
           authService.clearSession()
           navigate('/login', { replace: true })
